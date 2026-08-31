@@ -118,7 +118,8 @@ const PersonProfile qbyProfile = PersonProfile(
       color: 0xFF00E5A0,
       items: [
         '女朋友：王一如（常接送、共餐，关系亲近）',
-        '好友：肖悦、乐乐（首次带去和炙烧鸟）',
+        '好兄弟：陈子韬（三年前合作项目认识，入职三花智控）',
+        '好友：肖悦乐（首次带去和炙烧鸟）',
       ],
     ),
     ProfileDimension(
