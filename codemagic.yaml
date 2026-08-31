@@ -1,0 +1,25 @@
+# Codemagic 云构建配置 —— iOS 打包 + 自动上传 TestFlight
+# 用法：推到 GitHub 后，在 Codemagic 里选这个仓库，自动识别本文件
+
+workflows:
+  ios-build:
+    name: iOS 打包（TestFlight）
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: 拉取依赖
+        script: flutter pub get
+      - name: 构建 iOS
+        script: flutter build ipa --release --export-method app-store-connect
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_API_KEY        # .p8 文件内容
+        key_id: $APP_STORE_CONNECT_KEY_ID          # Key ID
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID    # Issuer ID
+        submit_to_testflight: true
