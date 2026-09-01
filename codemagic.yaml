@@ -26,7 +26,5 @@ workflows:
       - build/ios/ipa/*.ipa
     publishing:
       app_store_connect:
-        api_key: $APP_STORE_CONNECT_API_KEY        # .p8 文件内容
-        key_id: $APP_STORE_CONNECT_KEY_ID          # Key ID
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID    # Issuer ID
+        auth: integration                    # 复用 Developer Portal 集成（The Animatrix key）认证上传
         submit_to_testflight: true
