@@ -37,7 +37,7 @@ dependencies:
   # WebSocket 客户端 —— 对话页连接 hermes serve
   web_socket_channel: ^3.0.1
   # 语音：录音（web/Android/iOS）+ 播放（语音消息气泡）
-  record: ^5.2.0
+  record: ^7.1.1
   audioplayers: ^6.1.0
 
 dev_dependencies:
