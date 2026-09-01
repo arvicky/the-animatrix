@@ -18,6 +18,8 @@ workflows:
     scripts:
       - name: 拉取依赖
         script: flutter pub get
+      - name: 应用签名设置到 Xcode 项目
+        script: xcode-project use-profiles
       - name: 构建 iOS
         script: flutter build ipa --release --export-method app-store
     artifacts:
