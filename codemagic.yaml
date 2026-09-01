@@ -21,7 +21,7 @@ workflows:
       - name: 应用签名设置到 Xcode 项目
         script: xcode-project use-profiles
       - name: 构建 iOS
-        script: flutter build ipa --release --export-method app-store --export-options-plist=/Users/builder/export_options.plist
+        script: flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
