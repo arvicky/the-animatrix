@@ -27,4 +27,4 @@ workflows:
     publishing:
       app_store_connect:
         auth: integration                    # 复用 Developer Portal 集成（The Animatrix key）认证上传
-        submit_to_testflight: true
+        submit_to_testflight: false          # 只上传 ipa，不自动提交外部审核（内部测试手动加群组）
