@@ -45,7 +45,7 @@ class ConversationService {
   static final ConversationService instance = ConversationService._();
 
   static const String url =
-      'ws://127.0.0.1:9119/api/ws?token=exobrain-local-2026';
+      'wss://38011d21.r12.cpolar.top/api/ws?token=exobrain-local-2026';
 
   /// 当前连接的外脑 URL（可切换档案）
   String _currentUrl = url;
@@ -244,6 +244,22 @@ class ConversationService {
     }));
     return completer.future
         .timeout(const Duration(seconds: 30), onTimeout: () => null);
+  }
+
+  /// 打断当前正在生成的回复（serve session.interrupt：停生成 + 静音 TTS）。
+  Future<void> interrupt() async {
+    if (!connected) return;
+    final id = _nextId++;
+    _handlers[id] = (raw) {
+      final msg = _tryDecode(raw);
+      if (msg != null && msg['id'] == id) _handlers.remove(id);
+    };
+    _channel!.sink.add(jsonEncode({
+      'jsonrpc': '2.0',
+      'id': id,
+      'method': 'session.interrupt',
+      'params': {'session_id': _sessionId},
+    }));
   }
 
   /// 音频转文字（STT，faster-whisper），返回转写文字。

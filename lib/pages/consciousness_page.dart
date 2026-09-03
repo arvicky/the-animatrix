@@ -7,6 +7,8 @@ import 'package:record/record.dart';
 
 import '../services/audio_utils.dart';
 import '../services/conversation_service.dart';
+import '../data/memory_repository.dart';
+import '../models/memory_card.dart';
 
 /// 意识体状态机：待机 → 聆听 → 思考 → 说话
 enum BrainState { idle, listening, thinking, speaking }
@@ -79,6 +81,20 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
   StreamSubscription<void>? _onCompleteSub; // 播放完成监听
   StreamSubscription<bool>? _connSub; // 连接状态监听（断线自动重连）
 
+  // 流式 TTS 分段播报（阶段1：边收 delta 边按句合成播）
+  int _ttsGen = 0; // 轮次令牌：打断/新一轮后旧任务自动跳过
+  Future<void> _ttsChain = Future.value(); // 串行播放链（保证句子顺序）
+  String _ttsBuffer = '';
+  bool _interrupted = false; // 本轮对话是否被打断（停止后续 TTS）
+
+  // VAD 自动断句（阶段2：静音自动停）
+  int _silentMs = 0;
+
+  // 播放中开口打断监听（阶段2：播放时监听麦克风，检测人声打断）
+  StreamSubscription<Amplitude>? _interruptAmpSub;
+  bool _interruptWatching = false;
+  int _interruptSpeechMs = 0;
+
   /// 外脑矩阵：可对话的外脑节点
   static const _peers = [
     ExobrainPeer(
@@ -93,7 +109,7 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     ExobrainProfile(
         name: '曲炳阳',
         profile: 'animatrix',
-        url: 'ws://127.0.0.1:9119/api/ws?token=exobrain-local-2026',
+        url: 'wss://38011d21.r12.cpolar.top/api/ws?token=exobrain-local-2026',
         color: Color(0xFF00D4FF)),
     ExobrainProfile(
         name: '王一如',
@@ -107,6 +123,11 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
         color: Color(0xFF00E5A0)),
   ];
   int _activeProfile = 0; // 当前登录的外脑档案索引
+
+  // 聊天视图：0=我的对话（我和我的外脑），1=互联对话（别人和我的外脑）
+  int _viewMode = 0;
+  final _repository = ServerRepository();
+  List<MemoryCard> _interlinkCards = []; // 互联对话记录（交互存档）
 
   static const _memories = [
     '我记得你爱喝金宾，做成嗨棒挺配烧鸟',
@@ -135,6 +156,7 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
       ),
     );
     if (kIsWeb) _connect();
+    _loadInterlink();
     // 监听连接状态变化：断线时同步状态并自动重连
     _connSub = _service.connectionChanges.listen((ok) {
       if (!mounted) return;
@@ -150,6 +172,20 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
         });
       }
     });
+  }
+
+  /// 加载互联对话记录（别人和我的外脑的交互存档）
+  Future<void> _loadInterlink() async {
+    try {
+      final cards = await _repository.fetchCards();
+      if (!mounted) return;
+      setState(() {
+        _interlinkCards = cards
+            .where((c) =>
+                c.tags.contains('外脑互联') || c.tags.contains('交互存档'))
+            .toList();
+      });
+    } catch (_) {}
   }
 
   Future<void> _connect() async {
@@ -260,6 +296,11 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     _unlockAudio(); // 用户手势：解锁浏览器自动播放
     // 用户再次输入：停止当前播报（旧回复不再自动重播）
     if (_playing) await _stopPlayback();
+    // 新一轮对话：作废旧 TTS 链任务 + 重置缓冲
+    _ttsGen++;
+    _interrupted = false;
+    _ttsBuffer = '';
+    int ttsLen = 0; // 已入队 TTS 的字符数（跟踪 delta 增量）
     var trimmed = text.trim();
 
     // 语音/文字触发路由：识别「找XX」「跟XX说XX」「问XX」
@@ -307,6 +348,14 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     try {
       await for (final msg in _service.send(trimmed)) {
         if (!mounted) break;
+        // 流式 TTS：把新增文本切句入队（边生成边播）
+        if (msg.role == 'assistant' && msg.streaming && !_interrupted) {
+          final full = msg.text;
+          if (full.length > ttsLen) {
+            _feedTts(full.substring(ttsLen));
+            ttsLen = full.length;
+          }
+        }
         setState(() {
           _state = msg.streaming ? BrainState.thinking : BrainState.speaking;
           // 找到或追加当前 assistant 流式消息
@@ -345,37 +394,23 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
         });
       }
     }
-    // 回复完成后：生成语音并自动播放（不阻塞 UI）
-    _speakLastReply();
+    // 回复完成后：flush 剩余 TTS buffer（最后一句可能无标点）
+    if (!_interrupted && _ttsBuffer.trim().isNotEmpty) {
+      _enqueueTts(_ttsBuffer);
+      _ttsBuffer = '';
+    }
   }
 
-  /// 为最后一条 assistant 回复生成语音（TTS）并自动播放。每条回复只自动播一遍。
-  Future<void> _speakLastReply() async {
-    final idx = _messages.lastIndexWhere((m) => m.role == 'assistant');
-    if (idx < 0) return;
-    final msg = _messages[idx];
-    if (msg.text.trim().isEmpty) return;
-    if (msg.spoken) return; // 已自动播报过，不重复播（除非手动点击重播）
-    final b64 = await _service.ttsSynthesize(msg.text.trim());
-    debugPrint(
-        '[TTS] synthesize => ${b64 == null ? "null" : "${b64.length} chars"}');
-    if (b64 == null || !mounted) return;
-    setState(() {
-      final i = _messages.lastIndexWhere((m) => m.role == 'assistant');
-      if (i >= 0) {
-        _messages[i] = _messages[i].copyWith(audioBase64: b64, spoken: true);
-      }
-    });
-    await _playAudio(b64);
-  }
-
-  /// 播放语音（自动播放/重播），与录音互斥。
+  /// 停止当前播放（打断 TTS 播报）
   Future<void> _playAudio(String audioBase64) async {
     if (_recording) return; // 录音中不播放
     if (mounted) setState(() => _playing = true);
+    // 播放中监听麦克风：检测到人声 → 开口打断
+    await _startInterruptWatch();
     // 监听播放完成（play() 在播放开始即返回，不能依赖它判断「播放中」）
     _onCompleteSub ??= _play.onPlayerComplete.listen((_) {
       if (mounted) setState(() => _playing = false);
+      _stopInterruptWatch(); // 播放完停止监听
     });
     try {
       await _play.play(
@@ -401,6 +436,8 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
       // 微信逻辑：语音输入优先 —— 正在播放时按录音，先打断播放再进入录音
       await _stopPlayback();
     }
+    // 确保播放监听已停止，避免与录音竞争同一个 recorder
+    await _stopInterruptWatch();
     if (_recording) {
       await _stopRecording();
     } else {
@@ -414,6 +451,83 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
       await _play.stop();
     } catch (_) {}
     if (mounted) setState(() => _playing = false);
+  }
+
+  /// 打断：停止播报 + 通知 serve 停生成 + 清空待播队列
+  Future<void> _interrupt() async {
+    _interrupted = true;
+    _ttsGen++; // 旧链任务全部跳过
+    _ttsBuffer = '';
+    await _stopPlayback();
+    await _service.interrupt();
+  }
+
+  /// 把一句话追加到串行播放链（顺序播，不阻塞 delta 接收）。
+  void _enqueueTts(String sentence) {
+    final s = sentence.trim();
+    if (s.isEmpty) return;
+    final gen = _ttsGen; // 捕获当前轮次
+    _ttsChain = _ttsChain.then((_) async {
+      if (_interrupted || gen != _ttsGen || !mounted) return;
+      final b64 = await _service.ttsSynthesize(s);
+      if (b64 == null || !mounted || _interrupted || gen != _ttsGen) return;
+      await _playAudio(b64);
+    });
+  }
+
+  /// 累积流式文本，切完整句（标点结尾）入队，剩余留在 buffer。
+  void _feedTts(String newText) {
+    _ttsBuffer += newText;
+    final re = RegExp(r'[^。！？；…\n]+[。！？；…]');
+    while (true) {
+      final m = re.firstMatch(_ttsBuffer);
+      if (m == null) break;
+      _enqueueTts(m.group(0)!);
+      _ttsBuffer = _ttsBuffer.substring(m.end);
+    }
+  }
+
+  /// 播放中监听麦克风：检测到持续人声 → 开口打断（进入下一轮录音）。
+  Future<void> _startInterruptWatch() async {
+    if (_interruptWatching || _recording) return;
+    try {
+      await _rec.start(const RecordConfig(), path: '');
+      _interruptWatching = true;
+      _interruptSpeechMs = 0;
+      _interruptAmpSub = _rec
+          .onAmplitudeChanged(const Duration(milliseconds: 100))
+          .listen((amp) {
+        if (!mounted || !_playing) return;
+        final v = ((amp.current + 60) / 60).clamp(0.0, 1.0).toDouble();
+        // 播放中用更高阈值（0.35），区分近场人声与喇叭回声
+        if (v > 0.35) {
+          _interruptSpeechMs += 100;
+          if (_interruptSpeechMs >= 300) {
+            _interruptSpeechMs = 0;
+            _onVoiceInterrupt();
+          }
+        } else {
+          _interruptSpeechMs = 0;
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _stopInterruptWatch() async {
+    if (!_interruptWatching) return; // 没在监听就不动（幂等）
+    _interruptWatching = false;
+    await _interruptAmpSub?.cancel();
+    _interruptAmpSub = null;
+    try {
+      await _rec.stop();
+    } catch (_) {}
+  }
+
+  /// 播放中被开口打断：停播 + 打断 serve → 立即进入录音继续听。
+  Future<void> _onVoiceInterrupt() async {
+    await _interrupt();
+    await _stopInterruptWatch();
+    if (mounted && !_recording) await _startRecording();
   }
 
   Future<void> _startRecording() async {
@@ -431,12 +545,23 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
       _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted) setState(() => _recordingSeconds++);
       });
+      _silentMs = 0;
       _ampSub = _rec
           .onAmplitudeChanged(const Duration(milliseconds: 100))
           .listen((amp) {
         if (!mounted) return;
         final v = ((amp.current + 60) / 60).clamp(0.0, 1.0).toDouble();
         setState(() => _amplitude = v);
+        // VAD 自动断句：音量高=说话，连续静音 500ms=说完自动停
+        if (v > 0.12) {
+          _silentMs = 0;
+        } else {
+          _silentMs += 100;
+          if (_silentMs >= 500 && _recording) {
+            _silentMs = 0;
+            _stopRecording();
+          }
+        }
       });
       await _rec.start(const RecordConfig(), path: '');
     } catch (_) {
@@ -477,6 +602,7 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     _memoryCycle?.cancel();
     _recordingTimer?.cancel();
     _ampSub?.cancel();
+    _interruptAmpSub?.cancel();
     _onCompleteSub?.cancel();
     _connSub?.cancel();
     _breathe.dispose();
@@ -555,31 +681,141 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
               ),
             ),
             const SizedBox(height: 16),
-            // 正在交互的外脑（区别于顶栏「当前外脑」= 登录档案）
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 26),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('正在交互',
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF6B7794),
-                        letterSpacing: 1.5)),
+            // 视图切换：我的对话 / 互联对话
+            _viewSwitcher(),
+            const SizedBox(height: 14),
+            if (_viewMode == 0) ...[
+              // 正在交互的外脑（区别于顶栏「当前外脑」= 登录档案）
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 26),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('正在交互',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF6B7794),
+                          letterSpacing: 1.5)),
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            _matrixBar(),
-            const SizedBox(height: 10),
-            // 主体：无对话时显示光球，有对话时显示消息列表
-            Expanded(
-              child: hasMessages ? _messageList() : _orbCenter(),
-            ),
-            // 录音回显：音量条 + 计时
-            if (_recording) _recordingBar(),
-            // 底部输入框
-            _inputBar(),
+              const SizedBox(height: 8),
+              _matrixBar(),
+              const SizedBox(height: 10),
+              // 主体：无对话时显示光球，有对话时显示消息列表
+              Expanded(
+                child: hasMessages ? _messageList() : _orbCenter(),
+              ),
+              // 录音回显：音量条 + 计时
+              if (_recording) _recordingBar(),
+              // 底部输入框
+              _inputBar(),
+            ] else ...[
+              // 互联对话：别人和我的外脑的交互记录
+              Expanded(child: _interlinkView()),
+            ],
           ],
         ),
+      ),
+    );
+  }
+
+  /// 顶部视图切换：我的对话 / 互联对话
+  Widget _viewSwitcher() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 26),
+      child: Row(
+        children: [
+          _viewTab('我的对话', 0),
+          const SizedBox(width: 10),
+          _viewTab('互联对话', 1),
+        ],
+      ),
+    );
+  }
+
+  Widget _viewTab(String label, int mode) {
+    final on = _viewMode == mode;
+    return GestureDetector(
+      onTap: () {
+        setState(() => _viewMode = mode);
+        if (mode == 1) _loadInterlink();
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: on
+              ? const Color(0xFF00D4FF).withValues(alpha: 0.18)
+              : const Color(0x0DFFFFFF),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: on
+                ? const Color(0xFF00D4FF).withValues(alpha: 0.7)
+                : const Color(0x17FFFFFF),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+            color: on ? const Color(0xFF00D4FF) : const Color(0xFF9AA7C7),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 互联对话视图：别人和我的外脑的交互记录
+  Widget _interlinkView() {
+    if (_interlinkCards.isEmpty) {
+      return const Center(
+        child: Text(
+          '还没有互联对话记录\n当别人通过授权和你的外脑对话时，这里会留下存档',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Color(0xFF6B7794), fontSize: 13, height: 1.6),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      itemCount: _interlinkCards.length,
+      itemBuilder: (context, i) => _interlinkCard(_interlinkCards[i]),
+    );
+  }
+
+  Widget _interlinkCard(MemoryCard c) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0x0DFFFFFF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0x17FFFFFF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.hub_outlined, size: 16, color: Color(colorOf(c.category))),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(c.title,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFEAF0FF))),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(c.content,
+              style: const TextStyle(
+                  fontSize: 12.5, color: Color(0xFFB9C4DD), height: 1.5)),
+          const SizedBox(height: 6),
+          Text(c.happenedAt,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF6B7794))),
+        ],
       ),
     );
   }
@@ -787,38 +1023,41 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     return LayoutBuilder(
       builder: (context, constraints) {
         final orbSize = (constraints.maxHeight * 0.5).clamp(90.0, 260.0);
-        return Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _orbZone(size: orbSize),
-              const SizedBox(height: 16),
-              Text(_stateLabel(),
-                  style: const TextStyle(
-                      color: Color(0xFF7E8BB0),
-                      fontSize: 13,
-                      letterSpacing: 2)),
-              const SizedBox(height: 8),
-              Text(
-                _connected ? '轻触光球，跟外脑说句话' : '正在连接外脑…',
-                style: TextStyle(
-                    color: _accentSoft().withValues(alpha: 0.6), fontSize: 12),
-              ),
-              const SizedBox(height: 16),
-              // 上下文记忆轮播
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 400),
-                child: Text(
-                  _memories[_memoryIndex],
-                  key: ValueKey(_memoryIndex),
-                  textAlign: TextAlign.center,
+        // 窄屏（手机框/小窗）下光球+文字堆叠会溢出，包一层滚动兜底
+        return SingleChildScrollView(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _orbZone(size: orbSize),
+                const SizedBox(height: 16),
+                Text(_stateLabel(),
+                    style: const TextStyle(
+                        color: Color(0xFF7E8BB0),
+                        fontSize: 13,
+                        letterSpacing: 2)),
+                const SizedBox(height: 8),
+                Text(
+                  _connected ? '轻触光球，跟外脑说句话' : '正在连接外脑…',
                   style: TextStyle(
-                      color: _accentSoft().withValues(alpha: 0.5),
-                      fontSize: 11,
-                      height: 1.5),
+                      color: _accentSoft().withValues(alpha: 0.6), fontSize: 12),
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                // 上下文记忆轮播
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 400),
+                  child: Text(
+                    _memories[_memoryIndex],
+                    key: ValueKey(_memoryIndex),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: _accentSoft().withValues(alpha: 0.5),
+                        fontSize: 11,
+                        height: 1.5),
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
