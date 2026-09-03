@@ -35,7 +35,7 @@ const exobrains = (cons.exobrains || []).map(e => ({
   profile: e.profile, owner: e.owner, nickname: e.nickname, dir: e.dir, note: e.note,
 }));
 const authorization = (cons.authorization || []).map(a => ({
-  pair: a.pair, resource: a.resource, status: a.status,
+  pair: a.pair, resource: a.resource, status: a.status, scope: (a.scope || []).join(','),
 }));
 
 // 逃逸 Dart 字符串
@@ -94,7 +94,7 @@ lines.push('');
 // 授权
 lines.push('  static const List<Map<String, String>> authorization = [');
 for (const a of authorization) {
-  lines.push('    {' + ['pair', 'resource', 'status']
+  lines.push('    {' + ['pair', 'resource', 'status', 'scope']
     .map(k => `${q(k)}: ${q(a[k])}`).join(', ') + '},');
 }
 lines.push('  ];');

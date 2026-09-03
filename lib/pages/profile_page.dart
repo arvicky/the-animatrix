@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/memory_repository.dart';
+import '../data/onboarding_store.dart';
 import '../models/memory_card.dart';
 import '../models/person_profile.dart';
 import '../widgets/glow_background.dart';
@@ -22,6 +23,12 @@ class _ProfilePageState extends State<ProfilePage> {
   late Future<(List<Exobrain>, List<Authorization>)> _future;
   late List<BasicField> _basics;
   late List<ProfileDimension> _dims;
+
+  /// 展示名：首次引导填的名字优先，否则用内置画像名。
+  String get _displayName {
+    final n = OnboardingStore.cached?['name']?.trim();
+    return (n == null || n.isEmpty) ? qbyProfile.name : n;
+  }
 
   @override
   void initState() {
@@ -110,6 +117,61 @@ class _ProfilePageState extends State<ProfilePage> {
               );
             },
           ),
+          const SizedBox(height: 24),
+          _sectionTitle('语音成本核算'),
+          const SizedBox(height: 10),
+          _costCard(),
+        ],
+      ),
+    );
+  }
+
+  /// 语音外脑成本核算（单价：人民币；每分钟按 250 字语速折算）
+  Widget _costCard() {
+    const rows = [
+      ('TTS · MiniMax HD', '0.35 元/千字', '0.088'),
+      ('TTS · MiniMax Turbo', '0.20 元/千字', '0.050'),
+      ('ASR · 讯飞实时转写', '4.95 元/小时', '0.083'),
+      ('LLM · qwen-plus 输出', '≈0.03 元/万字', '<0.01'),
+    ];
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0x1AFFB020), Color(0x0DFFFFFF)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0x59FFB020)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final (name, price, perMin) in rows)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(name,
+                        style: const TextStyle(
+                            fontSize: 12.5, color: Color(0xFFE8EEFF))),
+                  ),
+                  Text(price,
+                      style: const TextStyle(
+                          fontSize: 11.5, color: Color(0xFF9AA7C7))),
+                  const SizedBox(width: 10),
+                  Text('$perMin 元/分',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFFFFB020),
+                          fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+          const Divider(height: 16, color: Color(0x17FFFFFF)),
+          const Text('结论：语音（ASR+TTS）是 LLM 的 10~100 倍，成本大头在 TTS 音费。',
+              style: TextStyle(
+                  fontSize: 11.5, color: Color(0xFFA9B6D8), height: 1.5)),
         ],
       ),
     );
@@ -140,8 +202,8 @@ class _ProfilePageState extends State<ProfilePage> {
                 end: Alignment.bottomRight,
               ),
             ),
-            child: const Center(
-              child: Text('曲',
+            child: Center(
+              child: Text(_displayName.isEmpty ? '?' : _displayName.substring(0, 1),
                   style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.w900,
@@ -153,7 +215,7 @@ class _ProfilePageState extends State<ProfilePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(qbyProfile.name,
+                Text(_displayName,
                     style: const TextStyle(
                         fontSize: 21,
                         fontWeight: FontWeight.w900,

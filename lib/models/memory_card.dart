@@ -111,17 +111,20 @@ class Authorization {
   final String pair;
   final String resource;
   final AuthStatus status;
+  final List<String> scope; // 分片授权：授权的 category 列表（空=未分片/未授权）
 
   const Authorization({
     required this.pair,
     required this.resource,
     required this.status,
+    this.scope = const [],
   });
 
   factory Authorization.fromMap(Map<String, String> m) => Authorization(
         pair: m['pair'] ?? '',
         resource: m['resource'] ?? '',
         status: AuthStatus.from(m['status'] ?? '待授权'),
+        scope: (m['scope'] ?? '').split(',').where((s) => s.isNotEmpty).toList(),
       );
 }
 

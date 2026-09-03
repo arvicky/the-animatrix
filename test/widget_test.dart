@@ -1,10 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:exobrain/main.dart';
+import 'package:exobrain/data/onboarding_store.dart';
 import 'package:exobrain/widgets/device_frame.dart';
 
 void main() {
+  setUp(() {
+    // 模拟已完成首次引导：ExobrainApp 的 Root 直接进主界面（4 tab）
+    SharedPreferences.setMockInitialValues({
+      'onboarding_profile_v1': '{"name":"曲炳阳"}',
+    });
+    OnboardingStore.reset();
+  });
+
   testWidgets('外壳冒烟：4 tab 存在且可切换', (WidgetTester tester) async {
     await tester.pumpWidget(const ExobrainApp());
     await tester.pump();
@@ -12,7 +22,7 @@ void main() {
     expect(find.text('对话'), findsOneWidget);
     expect(find.text('记忆'), findsOneWidget);
     expect(find.text('知识'), findsOneWidget);
-    expect(find.text('我的'), findsOneWidget);
+    expect(find.text('看板'), findsOneWidget);
 
     // 切换到「知识」tab
     await tester.tap(find.text('知识'));
@@ -20,12 +30,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('知识卡'), findsOneWidget);
 
-    // 切换到「我的」tab
-    await tester.tap(find.text('我的'));
+    // 切换到「看板」tab
+    await tester.tap(find.text('看板'));
     await tester.pump();
     await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 50)));
     await tester.pump();
-    expect(find.text('我的画像'), findsOneWidget);
+    expect(find.text('八维画像'), findsOneWidget);
     expect(find.text('身份'), findsOneWidget);
   });
 

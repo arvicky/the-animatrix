@@ -2,9 +2,11 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'data/memory_repository.dart';
+import 'data/onboarding_store.dart';
 import 'pages/consciousness_page.dart';
 import 'pages/knowledge_page.dart';
 import 'pages/memory_page.dart';
+import 'pages/onboarding_page.dart';
 import 'pages/profile_page.dart';
 import 'widgets/device_frame.dart';
 
@@ -28,7 +30,49 @@ class ExobrainApp extends StatelessWidget {
         ),
       ),
       // web 端套手机框模拟移动端；真机运行时不套
-      home: kIsWeb ? const DeviceFrame(child: HomeShell()) : const HomeShell(),
+      home: kIsWeb ? const DeviceFrame(child: Root()) : const Root(),
+    );
+  }
+}
+
+/// 启动入口：未完成首次引导 → 进引导页；已完成 → 进主界面。
+class Root extends StatefulWidget {
+  const Root({super.key});
+  @override
+  State<Root> createState() => _RootState();
+}
+
+class _RootState extends State<Root> {
+  bool? _onboarded;
+
+  @override
+  void initState() {
+    super.initState();
+    OnboardingStore.isCompleted.then((d) {
+      if (mounted) setState(() => _onboarded = d);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_onboarded == null) return const _Splash();
+    if (!_onboarded!) {
+      return OnboardingPage(onDone: () => setState(() => _onboarded = true));
+    }
+    return const HomeShell();
+  }
+}
+
+/// 启动加载页（判断引导状态时短暂显示）。
+class _Splash extends StatelessWidget {
+  const _Splash();
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF060A18),
+      body: Center(
+        child: CircularProgressIndicator(color: Color(0xFF00D4FF)),
+      ),
     );
   }
 }
@@ -42,7 +86,7 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  static const _repository = StaticRepository();
+  static const _repository = ServerRepository();
   int _tab = 0;
 
   static const _tabs = <(IconData, IconData, String)>[
