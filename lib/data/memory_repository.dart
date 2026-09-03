@@ -38,7 +38,7 @@ class StaticRepository implements MemoryRepository {
 /// 服务端实现：从 memory_server（http://127.0.0.1:9118）实时读 data.js。
 /// 每次 fetch 都重新拉取，data.js 一更新 App 即反映最新记忆，根治 seed 快照滞后。
 class ServerRepository implements MemoryRepository {
-  const ServerRepository({this.baseUrl = 'http://127.0.0.1:9118'});
+  const ServerRepository({this.baseUrl = 'https://28e65b06.r20.vip.cpolar.cn'});
 
   final String baseUrl;
 
