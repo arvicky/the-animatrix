@@ -5,6 +5,7 @@ import '../data/onboarding_store.dart';
 import '../models/memory_card.dart';
 import '../models/person_profile.dart';
 import '../widgets/glow_background.dart';
+import 'brain_auth_page.dart';
 
 /// 「看板」tab —— 个人看板。
 /// 顶部：基本信息（前期配置，含必填标注）
@@ -106,13 +107,15 @@ class _ProfilePageState extends State<ProfilePage> {
                   const SizedBox(height: 10),
                   ...exobrains.map(_exobrainCard),
                   const SizedBox(height: 24),
-                  _sectionTitle('授权分享'),
+                  _sectionTitle('大脑授权'),
                   const SizedBox(height: 6),
-                  const Text('跨外脑调取记忆 / 知识库，须先征得对方同意。',
+                  const Text('把记忆 / 知识技能按分组授权给他人。',
                       style: TextStyle(
                           fontSize: 12, color: Color(0xFF9AA7C7))),
                   const SizedBox(height: 12),
                   _authList(auth),
+                  const SizedBox(height: 12),
+                  _authEntry(),
                 ],
               );
             },
@@ -428,6 +431,38 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _authList(List<Authorization> auth) {
     return Column(
       children: [for (final a in auth) _authRow(a)],
+    );
+  }
+
+  /// 「配置大脑授权」入口 → 进入独立的大脑授权页
+  Widget _authEntry() {
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => BrainAuthPage(repository: widget.repository)),
+      ),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0x1F00D4FF),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0x6600D4FF)),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.shield_outlined, size: 18, color: Color(0xFF00D4FF)),
+            SizedBox(width: 8),
+            Text('配置大脑授权',
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF00D4FF))),
+          ],
+        ),
+      ),
     );
   }
 

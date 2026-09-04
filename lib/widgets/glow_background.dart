@@ -8,45 +8,10 @@ class GlowBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        // 三个光晕，复刻 dashboard .glow 的模糊大色块
-        Positioned(
-          top: -160,
-          left: -120,
-          child: _glow(const Color(0xFF00D4FF), 420),
-        ),
-        Positioned(
-          top: 200,
-          right: -140,
-          child: _glow(const Color(0xFF7B61FF), 360),
-        ),
-        Positioned(
-          bottom: -120,
-          left: 60,
-          child: _glow(const Color(0xFF00E5A0), 340),
-        ),
-        Positioned.fill(child: child),
-      ],
-    );
-  }
-
-  Widget _glow(Color c, double size) {
-    return IgnorePointer(
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: c.withValues(alpha: 0.16),
-        ),
-        child: Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: c.withValues(alpha: 0.1),
-          ),
-        ),
-      ),
+    // ponytail: 干净纯色背景，去掉光晕图案（影响看字）
+    return ColoredBox(
+      color: const Color(0xFF060A18),
+      child: child,
     );
   }
 }

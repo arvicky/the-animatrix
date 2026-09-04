@@ -17,12 +17,14 @@ enum BrainState { idle, listening, thinking, speaking }
 class ExobrainPeer {
   final String name; // 外脑名
   final String owner; // 主人名
+  final String profile; // Hermes 档案名（代答 target）
   final Color color; // 主题色
   final bool isSelf;
   const ExobrainPeer({
     required this.name,
     required this.owner,
     required this.color,
+    this.profile = '',
     this.isSelf = false,
   });
 }
@@ -68,6 +70,7 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
   bool _sending = false;
   bool _recording = false;
   bool _playing = false; // 是否正在播放语音（与录音互斥）
+  bool _callMode = false; // 通话模式（持续语音循环：播完自动听，开口打断继续）
 
   // 语音（方案 B：App 内录音 + 播放）—— 懒加载，避免测试环境触发平台通道
   AudioRecorder? _recorder;
@@ -99,8 +102,8 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
   static const _peers = [
     ExobrainPeer(
         name: '曲炳阳', owner: '我', color: Color(0xFF00D4FF), isSelf: true),
-    ExobrainPeer(name: '小梦', owner: '王一如', color: Color(0xFFB18CFF)),
-    ExobrainPeer(name: 'neo', owner: 'Neo', color: Color(0xFF00E5A0)),
+    ExobrainPeer(name: '小梦', owner: '王一如', color: Color(0xFFB18CFF), profile: 'matrix-wang'),
+    ExobrainPeer(name: 'neo', owner: 'Neo', color: Color(0xFF00E5A0), profile: 'neo-animatrix'),
   ];
   int _activePeer = 0;
 
@@ -186,6 +189,63 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
             .toList();
       });
     } catch (_) {}
+  }
+
+  /// 发送代答请求 + 轮询对方外脑的回传
+  Future<void> _sendInterlink(ExobrainPeer peer, String text) async {
+    try {
+      await _repository.askInterlink(peer.profile, text);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        final idx = _messages.lastIndexWhere((m) => m.role == 'assistant' && m.streaming);
+        final err = ChatMessage(role: 'assistant', text: '发送失败：$e');
+        if (idx != -1) {
+          _messages[idx] = err;
+        } else {
+          _messages.add(err);
+        }
+      });
+      return;
+    }
+    _pollInterlinkReply(peer);
+  }
+
+  /// 轮询代答结果（最多 2 分钟），有新交互存档就取最新一条作为代答回复
+  void _pollInterlinkReply(ExobrainPeer peer) {
+    final before = _interlinkCards.length;
+    var tries = 0;
+    Timer.periodic(const Duration(seconds: 5), (timer) async {
+      tries++;
+      if (tries > 24) {
+        timer.cancel();
+        if (!mounted) return;
+        setState(() {
+          final idx = _messages.lastIndexWhere((m) => m.role == 'assistant' && m.streaming);
+          final msg = ChatMessage(
+              role: 'assistant',
+              text: '「${peer.name}」暂时没回传，稍后可在「互联对话」里查看。');
+          if (idx != -1) _messages[idx] = msg;
+        });
+        return;
+      }
+      await _loadInterlink();
+      if (!mounted) return;
+      if (_interlinkCards.length > before) {
+        timer.cancel();
+        final latest = _interlinkCards.last;
+        final text = latest.summary.isNotEmpty ? latest.summary : latest.content;
+        setState(() {
+          final idx = _messages.lastIndexWhere((m) => m.role == 'assistant' && m.streaming);
+          final reply = ChatMessage(role: 'assistant', text: '「${peer.name}」代答：$text');
+          if (idx != -1) {
+            _messages[idx] = reply;
+          } else {
+            _messages.add(reply);
+          }
+        });
+      }
+    });
   }
 
   Future<void> _connect() async {
@@ -321,17 +381,19 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
       trimmed = rest;
     }
 
-    // 非自己外脑：走转达（MVP 模拟，后续接 kanban 传话）
+    // 非自己外脑：走代答（kanban 传话 → 对方外脑用授权记忆/知识代答 → 回传）
     if (!_peers[_activePeer].isSelf) {
+      final peer = _peers[_activePeer];
       setState(() {
         _messages.add(ChatMessage(role: 'user', text: trimmed));
         _messages.add(ChatMessage(
             role: 'assistant',
-            text:
-                '（已通过外脑矩阵转达给「${_peers[_activePeer].name}」，她回复后会回传给你）'));
+            text: '已发送给「${peer.name}」，她代答中，稍后回传…',
+            streaming: true));
         _state = BrainState.idle;
       });
       _input.clear();
+      _sendInterlink(peer, trimmed);
       return;
     }
 
@@ -411,6 +473,10 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     _onCompleteSub ??= _play.onPlayerComplete.listen((_) {
       if (mounted) setState(() => _playing = false);
       _stopInterruptWatch(); // 播放完停止监听
+      // 通话模式：播完自动进入下一轮录音（持续通话循环）
+      if (_callMode && mounted && !_recording) {
+        _startRecording();
+      }
     });
     try {
       await _play.play(
@@ -442,6 +508,24 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
       await _stopRecording();
     } else {
       await _startRecording();
+    }
+  }
+
+  /// 通话模式开关：进入自动开始第一轮录音，退出停止录音/播放。
+  Future<void> _toggleCallMode() async {
+    if (_callMode) {
+      // 挂断：退出通话模式
+      setState(() => _callMode = false);
+      await _stopInterruptWatch();
+      if (_recording) await _stopRecording();
+      await _stopPlayback();
+    } else {
+      // 接通：进入通话模式，自动开始听
+      if (!_connected || _sending) return;
+      setState(() => _callMode = true);
+      if (_playing) await _stopPlayback();
+      await _stopInterruptWatch();
+      if (!_recording) await _startRecording();
     }
   }
 
@@ -1238,6 +1322,26 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
                 color: _recording
                     ? const Color(0xFFFF5C7A)
                     : _accentSoft(),
+                size: 20,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: _connected && !_sending ? _toggleCallMode : null,
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _callMode ? const Color(0x33FF5C7A) : const Color(0x0DFFFFFF),
+                border: Border.all(
+                  color: _callMode ? const Color(0xFFFF5C7A) : const Color(0x17FFFFFF),
+                ),
+              ),
+              child: Icon(
+                _callMode ? Icons.call_end : Icons.call,
+                color: _callMode ? const Color(0xFFFF5C7A) : _accentSoft(),
                 size: 20,
               ),
             ),

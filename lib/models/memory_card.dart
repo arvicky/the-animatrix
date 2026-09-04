@@ -111,21 +111,30 @@ class Authorization {
   final String pair;
   final String resource;
   final AuthStatus status;
-  final List<String> scope; // 分片授权：授权的 category 列表（空=未分片/未授权）
+  final Map<String, List<String>> grant; // 大脑授权：{memory:[分组...], knowledge:[分组...]}
 
   const Authorization({
     required this.pair,
     required this.resource,
     required this.status,
-    this.scope = const [],
+    this.grant = const {},
   });
 
-  factory Authorization.fromMap(Map<String, String> m) => Authorization(
-        pair: m['pair'] ?? '',
-        resource: m['resource'] ?? '',
-        status: AuthStatus.from(m['status'] ?? '待授权'),
-        scope: (m['scope'] ?? '').split(',').where((s) => s.isNotEmpty).toList(),
-      );
+  factory Authorization.fromMap(Map<String, dynamic> m) {
+    final g = <String, List<String>>{};
+    final raw = m['grant'];
+    if (raw is Map) {
+      raw.forEach((k, v) {
+        g[k.toString()] = (v as List?)?.map((e) => e.toString()).toList() ?? [];
+      });
+    }
+    return Authorization(
+      pair: m['pair'] ?? '',
+      resource: m['resource'] ?? '',
+      status: AuthStatus.from(m['status'] ?? '待授权'),
+      grant: g,
+    );
+  }
 }
 
 /// 分类 → 颜色（与 dashboard 一致）
