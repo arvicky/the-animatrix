@@ -3,16 +3,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:exobrain/main.dart';
-import 'package:exobrain/data/onboarding_store.dart';
+import 'package:exobrain/data/account_store.dart';
 import 'package:exobrain/widgets/device_frame.dart';
 
 void main() {
   setUp(() {
-    // 模拟已完成首次引导：ExobrainApp 的 Root 直接进主界面（4 tab）
+    // 模拟已登录：ExobrainApp 的 Root 直接进主界面（4 tab），跳过登录/引导
     SharedPreferences.setMockInitialValues({
-      'onboarding_profile_v1': '{"name":"曲炳阳"}',
+      'account_session_v1': '{"username":"qb","profile":"animatrix"}',
     });
-    OnboardingStore.reset();
+    AccountStore.reset();
   });
 
   testWidgets('外壳冒烟：4 tab 存在且可切换', (WidgetTester tester) async {

@@ -51,15 +51,71 @@ class _MemoryPageState extends State<MemoryPage> {
           for (final c in cards) {
             byDay.putIfAbsent(c.day.isEmpty ? '未标注' : c.day, () => []).add(c);
           }
+          // 当日所属事件：当天有进度记录的规划事件
+          final today = _selectedDay ?? _todayStr();
+          final dayPlans = cards.where((c) {
+            final isPlan = c.category == '规划' ||
+                c.category == '计划' ||
+                c.tags.any((t) => t.contains('规划') || t.contains('计划'));
+            return isPlan && c.history.any((h) => h.contains(today));
+          }).toList();
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             children: [
               _calendar(byDay),
+              if (dayPlans.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                _dayPlans(dayPlans),
+              ],
               const SizedBox(height: 16),
               _dayContent(byDay),
             ],
           );
         },
+      ),
+    );
+  }
+
+  // ===== 当日所属事件 =====
+
+  Widget _dayPlans(List<MemoryCard> plans) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0x1400E5A0), Color(0x0F00D4FF)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0x4000E5A0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('当日所属事件',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF00E5A0),
+                  letterSpacing: 1)),
+          const SizedBox(height: 8),
+          ...plans.map((p) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    const Text('● ',
+                        style:
+                            TextStyle(fontSize: 10, color: Color(0xFF00E5A0))),
+                    Expanded(
+                      child: Text(p.title,
+                          style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFFE8EEFF))),
+                    ),
+                  ],
+                ),
+              )),
+        ],
       ),
     );
   }
@@ -399,6 +455,24 @@ class _MemoryPageState extends State<MemoryPage> {
     );
   }
 
+  Widget _accessTag(String access) {
+    final isAll = access == '所有人';
+    final color = isAll ? const Color(0xFF00E5A0) : const Color(0xFFFFB020);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Text(
+        isAll ? '🔓 所有人' : '🔒 仅个人',
+        style: TextStyle(
+            fontSize: 9.5, fontWeight: FontWeight.w700, color: color),
+      ),
+    );
+  }
+
   List<MemoryCard> _sorted(List<MemoryCard> list) {
     final l = [...list];
     l.sort((a, b) => a.happenedAt.compareTo(b.happenedAt));
@@ -465,6 +539,8 @@ class _MemoryPageState extends State<MemoryPage> {
                                 fontWeight: FontWeight.w700,
                                 color: color)),
                       ),
+                      const SizedBox(width: 6),
+                      _accessTag(c.access),
                     ],
                   ),
                   const SizedBox(height: 6),

@@ -46,3 +46,9 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Hermes 本地缓存（desktop-attachments）
+.hermes/
+
+# 敏感部署清单（Apple KEY/ID，不提交）
+docs/iOS部署-KEY与ID清单.md

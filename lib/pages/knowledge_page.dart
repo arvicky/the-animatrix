@@ -184,6 +184,8 @@ class _KnowledgePageState extends State<KnowledgePage> {
                               fontWeight: FontWeight.w800,
                               color: color)),
                     ),
+                    const SizedBox(width: 6),
+                    _accessTag(c.access),
                     const Spacer(),
                     Text('v${c.version}',
                         style: const TextStyle(
@@ -239,6 +241,24 @@ class _KnowledgePageState extends State<KnowledgePage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _accessTag(String access) {
+    final isAll = access == '所有人';
+    final color = isAll ? const Color(0xFF00E5A0) : const Color(0xFFFFB020);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Text(
+        isAll ? '🔓 所有人' : '🔒 仅个人',
+        style: TextStyle(
+            fontSize: 10, fontWeight: FontWeight.w700, color: color),
       ),
     );
   }

@@ -45,7 +45,7 @@ class ConversationService {
   static final ConversationService instance = ConversationService._();
 
   static const String url =
-      'wss://38011d21.r12.cpolar.top/api/ws?token=exobrain-local-2026';
+      'ws://127.0.0.1:9119/api/ws?token=exobrain-local-2026';
 
   /// 当前连接的外脑 URL（可切换档案）
   String _currentUrl = url;

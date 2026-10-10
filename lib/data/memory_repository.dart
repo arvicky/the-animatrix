@@ -20,6 +20,8 @@ abstract class MemoryRepository {
   Future<void> saveAuth(String pair, Map<String, List<String>> grant);
   Future<void> saveGroup(String action, String type, String name, {String? newName});
   Future<String> askInterlink(String target, String text);
+  Future<Map<String, String>> accountLogin(String username, String password);
+  Future<Map<String, String>> accountRegister(String username, String password, String profile);
 }
 
 /// 静态实现：数据随 App 打包（seed_data.dart 由 export_seed.mjs 生成）。
@@ -49,18 +51,25 @@ class StaticRepository implements MemoryRepository {
 
   @override
   Future<String> askInterlink(String target, String text) async => '';
+
+  @override
+  Future<Map<String, String>> accountLogin(String username, String password) async => const {};
+
+  @override
+  Future<Map<String, String>> accountRegister(String username, String password, String profile) async => const {};
 }
 
 /// 服务端实现：从 memory_server（https://…cpolar 隧道）实时读/写 data.js + console_data.js。
 /// 每次 fetch 都重新拉取，data.js 一更新 App 即反映最新记忆，根治 seed 快照滞后。
 class ServerRepository implements MemoryRepository {
-  const ServerRepository({this.baseUrl = 'https://28e65b06.r20.vip.cpolar.cn'});
+  const ServerRepository({this.baseUrl = 'http://127.0.0.1:9118', this.profile = 'animatrix'});
 
   final String baseUrl;
+  final String profile;
 
   @override
   Future<List<MemoryCard>> fetchCards() async {
-    final json = await _get('/api/memory');
+    final json = await _get('/api/memory?profile=$profile');
     final skills = (json['skills'] ?? const []) as List;
     return skills.map((s) => MemoryCard.fromMap(s as Map<String, dynamic>)).toList();
   }
@@ -109,6 +118,31 @@ class ServerRepository implements MemoryRepository {
   Future<String> askInterlink(String target, String text) async {
     final json = await _post('/api/interlink/ask', {'target': target, 'text': text});
     return (json['message'] ?? '已发送').toString();
+  }
+
+  @override
+  Future<Map<String, String>> accountLogin(String username, String password) =>
+      _account('/api/account/login', {'username': username, 'password': password});
+
+  @override
+  Future<Map<String, String>> accountRegister(String username, String password, String profile) =>
+      _account('/api/account/register', {'username': username, 'password': password, 'profile': profile});
+
+  /// 账号接口：返回 {username, profile}，失败时抛出的错误消息 = 后端中文提示。
+  Future<Map<String, String>> _account(String path, Map body) async {
+    final resp = await http.post(
+      Uri.parse('$baseUrl$path'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+    final json = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    if (resp.statusCode != 200) {
+      throw Exception((json['error'] ?? 'HTTP ${resp.statusCode}').toString());
+    }
+    return {
+      'username': (json['username'] ?? '').toString(),
+      'profile': (json['profile'] ?? '').toString(),
+    };
   }
 
   Future<Map<String, dynamic>> _get(String path) async {

@@ -25,11 +25,11 @@ void main() {
     expect(p.getString('onboarding_profile_v1'), contains('曲炳阳'));
   });
 
-  testWidgets('未引导时 Root 显示首次引导页（欢迎语）', (tester) async {
+  testWidgets('未登录时 Root 显示登录页', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: Root()));
     await tester.pump();
 
-    expect(find.text('你好，我是你的外脑'), findsOneWidget);
-    expect(find.text('开始认识我'), findsOneWidget);
+    expect(find.text('外脑矩阵'), findsOneWidget);
+    expect(find.text('注册新外脑'), findsOneWidget);
   });
 }

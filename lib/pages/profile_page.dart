@@ -12,9 +12,16 @@ import 'brain_auth_page.dart';
 /// 中部：八维度画像（可编辑，空维度提示「待补全」）
 /// 底部：外脑矩阵 + 授权分享
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key, required this.repository});
+  const ProfilePage({
+    super.key,
+    required this.repository,
+    required this.activeProfile,
+    required this.onSwitchProfile,
+  });
 
   final MemoryRepository repository;
+  final String activeProfile;
+  final ValueChanged<String> onSwitchProfile;
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -78,7 +85,9 @@ class _ProfilePageState extends State<ProfilePage> {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
           _header(),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
+          _profileSwitcher(),
+          const SizedBox(height: 4),
           _sectionTitle('基本信息'),
           const SizedBox(height: 6),
           const Text('前期配置 · 必填项不可为空，外脑会据此识别你。',
@@ -175,6 +184,56 @@ class _ProfilePageState extends State<ProfilePage> {
           const Text('结论：语音（ASR+TTS）是 LLM 的 10~100 倍，成本大头在 TTS 音费。',
               style: TextStyle(
                   fontSize: 11.5, color: Color(0xFFA9B6D8), height: 1.5)),
+        ],
+      ),
+    );
+  }
+
+  static const _exobrains = <(String, String, Color)>[
+    ('animatrix', '曲炳阳', Color(0xFF00D4FF)),
+    ('matrix-wang', '王一如', Color(0xFFB18CFF)),
+    ('neo-animatrix', 'Neo', Color(0xFF00E5A0)),
+  ];
+
+  Widget _profileSwitcher() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0x08FFFFFF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0x17FFFFFF)),
+      ),
+      child: Row(
+        children: [
+          for (final (profile, name, color) in _exobrains)
+            Expanded(
+              child: GestureDetector(
+                onTap: () => widget.onSwitchProfile(profile),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    color: widget.activeProfile == profile
+                        ? color.withValues(alpha: 0.2)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    name,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: widget.activeProfile == profile
+                          ? FontWeight.w800
+                          : FontWeight.w500,
+                      color: widget.activeProfile == profile
+                          ? color
+                          : const Color(0xFF9AA7C7),
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

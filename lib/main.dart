@@ -1,10 +1,12 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import 'data/account_store.dart';
 import 'data/memory_repository.dart';
-import 'data/onboarding_store.dart';
 import 'pages/consciousness_page.dart';
 import 'pages/knowledge_page.dart';
+import 'pages/login_page.dart';
+import 'pages/plan_page.dart';
 import 'pages/memory_page.dart';
 import 'pages/onboarding_page.dart';
 import 'pages/profile_page.dart';
@@ -35,7 +37,7 @@ class ExobrainApp extends StatelessWidget {
   }
 }
 
-/// 启动入口：未完成首次引导 → 进引导页；已完成 → 进主界面。
+/// 启动入口：未登录 → 登录页；注册（新外脑）→ 首次引导 → 主界面；已登录 → 直接主界面。
 class Root extends StatefulWidget {
   const Root({super.key});
   @override
@@ -43,21 +45,33 @@ class Root extends StatefulWidget {
 }
 
 class _RootState extends State<Root> {
-  bool? _onboarded;
+  bool? _loggedIn;
+  bool _onboarding = false;
 
   @override
   void initState() {
     super.initState();
-    OnboardingStore.isCompleted.then((d) {
-      if (mounted) setState(() => _onboarded = d);
-    });
+    // TODO(测试): 跳过登录，直接进主界面。正式版恢复下面的 AccountStore 判断。
+    _loggedIn = true;
+    // AccountStore.isLoggedIn.then((d) {
+    //   if (mounted) setState(() => _loggedIn = d);
+    // });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_onboarded == null) return const _Splash();
-    if (!_onboarded!) {
-      return OnboardingPage(onDone: () => setState(() => _onboarded = true));
+    if (_loggedIn == null) return const _Splash();
+    if (_onboarding) {
+      return OnboardingPage(onDone: () => setState(() => _onboarding = false));
+    }
+    if (!_loggedIn!) {
+      return LoginPage(
+        onLogin: () => setState(() => _loggedIn = true),
+        onRegistered: () => setState(() {
+          _loggedIn = true;
+          _onboarding = true;
+        }),
+      );
     }
     return const HomeShell();
   }
@@ -86,23 +100,38 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  static const _repository = ServerRepository();
+  String _activeProfile = 'animatrix';
+  late MemoryRepository _repository = ServerRepository(profile: _activeProfile);
   int _tab = 0;
+
+  void _switchProfile(String profile) {
+    setState(() {
+      _activeProfile = profile;
+      _repository = ServerRepository(profile: profile);
+    });
+  }
 
   static const _tabs = <(IconData, IconData, String)>[
     (Icons.chat_bubble_outline, Icons.chat_bubble, '对话'),
     (Icons.access_time, Icons.access_time_filled, '记忆'),
-    (Icons.grid_view_outlined, Icons.grid_view, '知识'),
-    (Icons.person_outline, Icons.person, '看板'),
+    (Icons.grid_view_outlined, Icons.grid_view, '知识库'),
+    (Icons.person_outline, Icons.person, '个人'),
+    (Icons.flag_outlined, Icons.flag, '规划'),
   ];
 
   @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
       const ConsciousnessPage(),
-      MemoryPage(repository: _repository),
-      KnowledgePage(repository: _repository),
-      ProfilePage(repository: _repository),
+      MemoryPage(key: ValueKey(_activeProfile), repository: _repository),
+      KnowledgePage(key: ValueKey(_activeProfile), repository: _repository),
+      ProfilePage(
+        key: ValueKey(_activeProfile),
+        repository: _repository,
+        activeProfile: _activeProfile,
+        onSwitchProfile: _switchProfile,
+      ),
+      PlanPage(key: ValueKey(_activeProfile), repository: _repository),
     ];
     return Scaffold(
       body: IndexedStack(index: _tab, children: pages),

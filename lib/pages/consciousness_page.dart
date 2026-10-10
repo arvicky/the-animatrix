@@ -67,6 +67,7 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
 
   final List<ChatMessage> _messages = [];
   final TextEditingController _input = TextEditingController();
+  bool _inChat = false; // 是否已进入聊天界面（点光球后为 true，不发消息）
   bool _sending = false;
   bool _recording = false;
   bool _playing = false; // 是否正在播放语音（与录音互斥）
@@ -81,7 +82,6 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
   Timer? _recordingTimer;
   double _amplitude = 0.0; // 音量 0..1
   StreamSubscription<Amplitude>? _ampSub;
-  StreamSubscription<void>? _onCompleteSub; // 播放完成监听
   StreamSubscription<bool>? _connSub; // 连接状态监听（断线自动重连）
 
   // 流式 TTS 分段播报（阶段1：边收 delta 边按句合成播）
@@ -112,7 +112,7 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     ExobrainProfile(
         name: '曲炳阳',
         profile: 'animatrix',
-        url: 'wss://38011d21.r12.cpolar.top/api/ws?token=exobrain-local-2026',
+        url: 'ws://127.0.0.1:9119/api/ws?token=exobrain-local-2026',
         color: Color(0xFF00D4FF)),
     ExobrainProfile(
         name: '王一如',
@@ -330,13 +330,12 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     );
   }
 
-  /// 点击光球：唤起外脑（状态走一遍），若已连接则进入对话
+  /// 点击光球：进入聊天界面（不发消息），唤起外脑走一遍状态
   void _onOrbTap() {
-    if (_connected && _messages.isEmpty) {
-      _send('你好');
-      return;
-    }
-    setState(() => _state = BrainState.listening);
+    setState(() {
+      _inChat = true;
+      _state = BrainState.listening;
+    });
     Future.delayed(const Duration(milliseconds: 1400), () {
       if (!mounted) return;
       setState(() => _state = BrainState.thinking);
@@ -381,20 +380,26 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
       trimmed = rest;
     }
 
-    // 非自己外脑：走代答（kanban 传话 → 对方外脑用授权记忆/知识代答 → 回传）
+    // 非自己外脑：实时直连对方外脑 serve（经 memory_server 代理 + 授权检查）
     if (!_peers[_activePeer].isSelf) {
       final peer = _peers[_activePeer];
-      setState(() {
-        _messages.add(ChatMessage(role: 'user', text: trimmed));
-        _messages.add(ChatMessage(
-            role: 'assistant',
-            text: '已发送给「${peer.name}」，她代答中，稍后回传…',
-            streaming: true));
-        _state = BrainState.idle;
-      });
-      _input.clear();
-      _sendInterlink(peer, trimmed);
-      return;
+      final targetUrl = 'ws://127.0.0.1:9118/api/ws?target=${peer.profile}';
+      try {
+        await _service.switchTo(targetUrl);
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _messages.add(ChatMessage(role: 'user', text: trimmed));
+            _messages.add(ChatMessage(
+                role: 'assistant',
+                text: '「${peer.name}」连接失败（可能未授权或不在线）'));
+            _sending = false;
+            _state = BrainState.idle;
+          });
+        }
+        _input.clear();
+        return;
+      }
     }
 
     setState(() {
@@ -467,16 +472,21 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
   Future<void> _playAudio(String audioBase64) async {
     if (_recording) return; // 录音中不播放
     if (mounted) setState(() => _playing = true);
-    // 播放中监听麦克风：检测到人声 → 开口打断
-    await _startInterruptWatch();
-    // 监听播放完成（play() 在播放开始即返回，不能依赖它判断「播放中」）
-    _onCompleteSub ??= _play.onPlayerComplete.listen((_) {
+    // 打电话模式才监听麦克风（开口打断+自动循环）；默认对讲机模式录音由用户手动按键触发
+    if (_callMode) {
+      await _startInterruptWatch();
+    }
+    // 等播放真正结束（自然 completed 或被打断的 stopped）再返回 → 不截断、也不卡死打断后的链
+    final completer = Completer<void>();
+    final sub = _play.onPlayerStateChanged.listen((state) {
+      if (state != PlayerState.completed && state != PlayerState.stopped) return;
       if (mounted) setState(() => _playing = false);
-      _stopInterruptWatch(); // 播放完停止监听
+      _stopInterruptWatch(); // 播放完/被停，停止监听
       // 通话模式：播完自动进入下一轮录音（持续通话循环）
       if (_callMode && mounted && !_recording) {
         _startRecording();
       }
+      if (!completer.isCompleted) completer.complete();
     });
     try {
       await _play.play(
@@ -485,7 +495,10 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     } catch (e) {
       debugPrint('[TTS] play failed: $e');
       if (mounted) setState(() => _playing = false);
+      if (!completer.isCompleted) completer.complete();
     }
+    await completer.future; // 等播放完成
+    await sub.cancel();
   }
 
   /// 解锁浏览器自动播放（autoplay policy）：须在用户手势回调里调用。
@@ -495,20 +508,19 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     } catch (_) {}
   }
 
-  /// 语音按钮：点击开始/停止录音（微信逻辑：语音输入优先，播放中按录音先打断播放）
+  /// 语音按钮：点击开始/停止录音。
+  /// 点开录音时强制打断终止外脑播放（作废 TTS 链 + 停播 + 通知 serve 停生成），只有我能说话。
   Future<void> _toggleRecording() async {
     if (!_connected || _sending) return;
-    if (_playing) {
-      // 微信逻辑：语音输入优先 —— 正在播放时按录音，先打断播放再进入录音
-      await _stopPlayback();
-    }
-    // 确保播放监听已停止，避免与录音竞争同一个 recorder
-    await _stopInterruptWatch();
     if (_recording) {
       await _stopRecording();
-    } else {
-      await _startRecording();
+      return;
     }
+    // 点录音：立即标记「收录中」，彻底静音（停播 + 作废待播 + 通知 serve 停生成），绝不播上一轮
+    _recording = true;
+    await _interrupt();
+    await _stopInterruptWatch();
+    await _startRecording();
   }
 
   /// 通话模式开关：进入自动开始第一轮录音，退出停止录音/播放。
@@ -540,7 +552,8 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
   /// 打断：停止播报 + 通知 serve 停生成 + 清空待播队列
   Future<void> _interrupt() async {
     _interrupted = true;
-    _ttsGen++; // 旧链任务全部跳过
+    _ttsGen++;
+    _ttsChain = Future.value(); // 彻底清空待播链
     _ttsBuffer = '';
     await _stopPlayback();
     await _service.interrupt();
@@ -559,7 +572,7 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     });
   }
 
-  /// 累积流式文本，切完整句（标点结尾）入队，剩余留在 buffer。
+  /// 累积流式文本，切完整句（标点结尾）入队。语音播完整内容，与文字回复一致。
   void _feedTts(String newText) {
     _ttsBuffer += newText;
     final re = RegExp(r'[^。！？；…\n]+[。！？；…]');
@@ -687,7 +700,6 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
     _recordingTimer?.cancel();
     _ampSub?.cancel();
     _interruptAmpSub?.cancel();
-    _onCompleteSub?.cancel();
     _connSub?.cancel();
     _breathe.dispose();
     _pulse.dispose();
@@ -723,7 +735,7 @@ class _ConsciousnessPageState extends State<ConsciousnessPage>
 
   @override
   Widget build(BuildContext context) {
-    final hasMessages = _messages.isNotEmpty;
+    final hasMessages = _messages.isNotEmpty || _inChat;
     return Container(
       decoration: const BoxDecoration(
         gradient: RadialGradient(

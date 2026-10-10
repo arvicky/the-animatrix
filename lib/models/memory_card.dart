@@ -25,6 +25,8 @@ class MemoryCard {
   final int salience;
   final List<String> links;
   final List<String> contextTags;
+  final String status; // 规划事件状态：未完成 / 进行中 / 已完成（普通记忆卡默认「已完成」）
+  final String access; // 权限标签：所有人 / 仅个人（默认「所有人」）
 
   const MemoryCard({
     required this.id,
@@ -44,6 +46,8 @@ class MemoryCard {
     required this.salience,
     required this.links,
     required this.contextTags,
+    this.status = '已完成',
+    this.access = '所有人',
   });
 
   factory MemoryCard.fromMap(Map<String, dynamic> m) => MemoryCard(
@@ -64,6 +68,8 @@ class MemoryCard {
         salience: (m['salience'] as num?)?.toInt() ?? 5,
         links: (m['links'] as List?)?.cast<String>() ?? const [],
         contextTags: (m['context_tags'] as List?)?.cast<String>() ?? const [],
+        status: m['status'] as String? ?? '已完成',
+        access: m['access'] as String? ?? '所有人',
       );
 }
 
